@@ -20,23 +20,21 @@ class ClientData:
         state = ClientState.UNDEFINED
     
 class Client:
-    buffer_size = 2048
-    client_time = 0
-    timer_on = False
-
     def __init__(self, server_name, server_port):
-        # Client state
+        #  Logging level set to INFO, change to DEBUG for print statements
+        logging.basicConfig(format='%(message)s', level=logging.INFO)
+        
+        # Setting up client state
         self.session_id = random.randint(0, (2 ** 32) - 1)
         self.sequence_number = 0
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.server_name = server_name
-        self.server_port = server_port
-        self.server_addr = (self.server_name, self.server_port)
-        self.state = ClientState.UNDEFINED
+        self.server_addr = (server_name, server_port)
+        self.buffer_size = 2048
+        self.client_time = time.process_time()
+        self.timer_on = True
         self.sem = Semaphore()
-
-        logging.basicConfig(format='%(message)s', level=logging.INFO)     #  Logging level set to INFO, change to DEBUG for print statements
-        self.running = True
+        
+        # Creating the socket we will communicate out of
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         # Create a queue to hold lines from standard input that still need to be sent
         self.message_queue = Queue()
@@ -48,12 +46,9 @@ class Client:
         # On initialization, send a hello to the server
         hello_header = create_header(int(MessageType.HELLO), 0, self.session_id)
         self.socket.sendto(hello_header, self.server_addr)
-
-        # Set timer
-        self.client_time = time.process_time()
-        self.timer_on = True
         self.state = ClientState.HELLO_WAIT
 
+        self.running = True
         # Begin keyboard and socket threads
         self.handle_keyboard_thread.start()
         self.handle_timeout_thread.start()
@@ -62,7 +57,7 @@ class Client:
     def __handle_timeouts(self):
         while self.running or self.timer_on:
             passed_time = time.process_time() - self.client_time;
-            if passed_time > 5.0 and self.timer_on:
+            if passed_time > 300.0 and self.timer_on:
                 self.__close()
             time.sleep(1)
 
@@ -80,39 +75,40 @@ class Client:
                     self.state = ClientState.CLOSING
                     self.__close()
                 else: 
-                    if self.state == ClientState.HELLO_WAIT:
-                        if command == int(MessageType.HELLO):
-                            self.timer_on = False
-                            self.state = ClientState.READY
-                            self.sequence_number += 1
-                        else:
-                            self.state = ClientState.CLOSING
-                            self.__close() 
-                    elif self.state == ClientState.READY:
-                        if command == int(MessageType.ALIVE):
-                            continue
-                        else:
-                            self.state = ClientState.CLOSING
-                            self.__close() 
-                    elif self.state == ClientState.READY_TIMER:
-                        if command == int(MessageType.ALIVE):
-                            self.timer_on = False
-                            self.state = ClientState.READY
-                        else:
+                    match self.state:
+                        case ClientState.HELLO_WAIT:
+                            if command == int(MessageType.HELLO):
+                                self.timer_on = False
+                                self.state = ClientState.READY
+                                self.sequence_number += 1
+                            else:
+                                self.state = ClientState.CLOSING
+                                self.__close() 
+                        case ClientState.READY:
+                            if command == int(MessageType.ALIVE):
+                                continue
+                            else:
+                                self.state = ClientState.CLOSING
+                                self.__close() 
+                        case ClientState.READY_TIMER:
+                            if command == int(MessageType.ALIVE):
+                                self.timer_on = False
+                                self.state = ClientState.READY
+                            else:
+                                self.state = ClientState.CLOSING
+                                self.__close()
+                        case ClientState.CLOSING:
+                            if command == int(MessageType.ALIVE):
+                                continue
+                            else:
+                                self.state = ClientState.CLOSING
+                                self.__close() 
+                        case ClientState.CLOSED:
+                            pass
+                        case _:
+                            logging.error("invalid state! closing")
                             self.state = ClientState.CLOSING
                             self.__close()
-                    elif self.state == ClientState.CLOSING:
-                        if command == int(MessageType.ALIVE):
-                            continue
-                        else:
-                            self.state = ClientState.CLOSING
-                            self.__close() 
-                    elif self.state == ClientState.CLOSED:
-                        pass
-                    else:
-                        logging.error("invalid state! closing")
-                        self.state = ClientState.CLOSING
-                        self.__close()
             
     def __handle_keyboard(self):
         while self.running:

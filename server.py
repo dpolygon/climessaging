@@ -16,9 +16,10 @@ class Server:
     testing = False
 
     def __init__(self, server_name, server_port):
-        # initialize server parameters
-        self.server_name = server_name
-        self.server_port = server_port
+        # Logging level set to INFO, change to DEBUG for print statements
+        logging.basicConfig(format='%(message)s', level=logging.INFO)
+        
+        # initialize server state
         self.server_addr = (server_name, server_port)
         self.outgoing_seq_num = 0
         self.sem = Semaphore()
@@ -30,12 +31,12 @@ class Server:
 
         # initialize shared objects
         self.clients = {}
+        self.packet_queue = Queue()
         self.message_queue = Queue()
         self.validation_queue = Queue()
 
-        logging.basicConfig(format='%(message)s', level=logging.INFO)     #  Logging level set to INFO, change to DEBUG for print statements
-
         # initialize threads
+        self.handle_packets_thread = Thread(target = self.__handle_packets, daemon = True)
         self.handle_keyboard_thread = Thread(target = self.__handle_keyboard, daemon = True)
         self.handle_validation_thread = Thread(target = self.__handle_validation, daemon = True)
         self.handle_printing_thread = Thread(target = self.__handle_printing, daemon = True)
@@ -47,6 +48,7 @@ class Server:
         self.handle_keyboard_thread.start()
         self.handle_printing_thread.start()
         self.handle_timeout_thread.start()
+        self.handle_packets_thread.start()
         self.__handle_socket()
 
         # join threads after server end
@@ -54,32 +56,7 @@ class Server:
         self.handle_printing_thread.join()
         self.handle_validation_thread.join()
         self.handle_timeout_thread.join()
-
-    def __server_close(self):
-        logging.debug("terminating all client connections")
-        # Iterate through all clients and send a goodbye
-        for session_id in self.clients:
-            print(f'closing {session_id}')
-            goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
-            self.socket.sendto(goodbye, self.clients.get(session_id).client_addr)
-            self.message_queue.put(f'{hex(session_id)} Session closed')
-        self.running = False
-
-    def __client_close(self, client_addr, session_id):
-        self.sem.acquire()
-
-        # Critical section
-        goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
-        self.socket.sendto(goodbye, client_addr)
-        if session_id in self.clients:
-            del(self.clients[session_id])
-            self.message_queue.put(f'{hex(session_id)} Session closed')
-
-        self.sem.release()
-
-        if self.testing:
-            self.message_queue.put(f'{self.expected_num_of_packets} {self.outgoing_seq_num} : Loss Rate: {100 - (self.outgoing_seq_num / self.expected_num_of_packets) * 100}')
-            self.outgoing_seq_num = 0
+        self.handle_packets_thread.join()
 
     def __handle_socket(self):
         while self.running:
@@ -89,6 +66,14 @@ class Server:
             except:
                 continue
             else:
+                self.packet_queue.put((packet, client_addr))
+                
+        self.socket.close()
+        
+    def __handle_packets(self):
+        while self.running:
+            if not self.packet_queue.empty():
+                packet, client_addr = self.packet_queue.get()
                 try:
                     magic, version, command, sequence_number, session_id = unpack_header(packet)
                 except:
@@ -119,9 +104,8 @@ class Server:
 
                     else:
                         self.__client_close(client_addr, session_id)
-        self.socket.close()
 
-    def __validate_and_push(self, session_id, sequence_number, packet, client_addr):
+    def validate_and_push(self, session_id, sequence_number, packet, client_addr):
         # We need to keep track of multiple things: last received packet number and expected
         if session_id in self.clients.keys():
             self.clients[session_id].previous_sequence_number = sequence_number
@@ -176,7 +160,8 @@ class Server:
                                 self.message_queue.put(f'{hex(session_id)}[{sequence_number}] Duplicate packet!')
                                 continue
 
-                    self.__validate_and_push(session_id, sequence_number, packet, client_addr)
+                    self.validate_and_push(session_id, sequence_number, packet, client_addr)
+             
                     
     def __handle_timeouts(self):
         while self.running:
@@ -184,7 +169,7 @@ class Server:
                 client = self.clients.get(session_id)
                 client_time = client.time
                 passed_time = time.process_time() - client_time;
-                if passed_time > 5.0 and client.timer_on:
+                if passed_time > 300.0 and client.timer_on:
                     self.__client_close(client.client_addr, session_id)
             time.sleep(1)
 
@@ -195,10 +180,39 @@ class Server:
             if not text or (text == "q\n" and sys.stdin.isatty()):
                 self.__server_close()
 
+
     def __handle_printing(self):
         while not self.message_queue.empty() or self.running:
             message = self.message_queue.get()
             print(message.rstrip())
+            
+            
+    def __server_close(self):
+        logging.debug("terminating all client connections")
+        # Iterate through all clients and send a goodbye
+        for session_id in self.clients:
+            print(f'closing {session_id}')
+            goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
+            self.socket.sendto(goodbye, self.clients.get(session_id).client_addr)
+            self.message_queue.put(f'{hex(session_id)} Session closed')
+        self.running = False
+
+
+    def __client_close(self, client_addr, session_id):
+        self.sem.acquire()
+
+        # Critical section
+        goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
+        self.socket.sendto(goodbye, client_addr)
+        if session_id in self.clients:
+            del(self.clients[session_id])
+            self.message_queue.put(f'{hex(session_id)} Session closed')
+
+        self.sem.release()
+
+        if self.testing:
+            self.message_queue.put(f'{self.expected_num_of_packets} {self.outgoing_seq_num} : Loss Rate: {100 - (self.outgoing_seq_num / self.expected_num_of_packets) * 100}')
+            self.outgoing_seq_num = 0
     
 if __name__ == "__main__":
     # create server socket

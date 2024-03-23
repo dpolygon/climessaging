@@ -85,20 +85,20 @@ class Server:
                     if session_id in self.clients and client_addr != self.clients[session_id].client_addr:
                         continue;
 
-                    if command == int(MessageType.HELLO):
+                    if command == MessageType.HELLO:
                         if session_id not in self.clients and sequence_number == 0:
                             # Create a new ClientData
                             self.clients[session_id] = ClientData(client_addr, session_id, time.process_time())
-                            hello_message = create_header(int(MessageType.HELLO), 0, session_id)
+                            hello_message = create_header(MessageType.HELLO, 0, session_id)
                             self.socket.sendto(hello_message, client_addr)
                             self.validation_queue.put((packet, client_addr))
 
-                    elif command == int(MessageType.DATA):
+                    elif command == MessageType.DATA:
                         logging.debug(f'Magic: {magic}, Version: {version}, Command: {command_to_ascii(command)}, {sequence_number}, {session_id}')
                         if session_id in self.clients:
                             self.validation_queue.put((packet, client_addr))
 
-                    elif command == int(MessageType.GOODBYE):
+                    elif command == MessageType.GOODBYE:
                         if session_id in self.clients: 
                             self.validation_queue.put((packet, client_addr))
 
@@ -120,7 +120,7 @@ class Server:
             self.clients[session_id].time = time.process_time()
 
             # Send back alive message
-            alive = create_header(int(MessageType.ALIVE), self.outgoing_seq_num, session_id)
+            alive = create_header(MessageType.ALIVE, self.outgoing_seq_num, session_id)
             self.socket.sendto(alive, client_addr)
 
     def __handle_validation(self):
@@ -130,16 +130,16 @@ class Server:
                 magic, version, command, sequence_number, session_id = unpack_header(packet)    
 
                 if magic == 0xC356 and version == 1:
-                    if command == int(MessageType.HELLO):
+                    if command == MessageType.HELLO:
                         self.message_queue.put(f'{hex(session_id)} [0] Session created')
                         continue
 
-                    elif command == int(MessageType.GOODBYE):
+                    elif command == MessageType.GOODBYE:
                         message = f'{hex(session_id)} [{sequence_number}] ' + 'GOODBYE from client.'
                         self.__client_close(client_addr, session_id)
                         continue
 
-                    elif command == int(MessageType.DATA):
+                    elif command == MessageType.DATA:
                         if session_id in self.clients.keys():
                             client = self.clients[session_id]
                             if sequence_number > client.expected_sequence_number:
@@ -192,7 +192,7 @@ class Server:
         # Iterate through all clients and send a goodbye
         for session_id in self.clients:
             print(f'closing {session_id}')
-            goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
+            goodbye = create_header(MessageType.GOODBYE, self.outgoing_seq_num, session_id)
             self.socket.sendto(goodbye, self.clients.get(session_id).client_addr)
             self.message_queue.put(f'{hex(session_id)} Session closed')
         self.running = False
@@ -202,7 +202,7 @@ class Server:
         self.sem.acquire()
 
         # Critical section
-        goodbye = create_header(int(MessageType.GOODBYE), self.outgoing_seq_num, session_id)
+        goodbye = create_header(MessageType.GOODBYE, self.outgoing_seq_num, session_id)
         self.socket.sendto(goodbye, client_addr)
         if session_id in self.clients:
             del(self.clients[session_id])

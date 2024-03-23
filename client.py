@@ -44,7 +44,7 @@ class Client:
         self.handle_timeout_thread = Thread(target = self.__handle_timeouts, daemon = True)
         
         # On initialization, send a hello to the server
-        hello_header = create_header(int(MessageType.HELLO), 0, self.session_id)
+        hello_header = create_header(MessageType.HELLO, 0, self.session_id)
         self.socket.sendto(hello_header, self.server_addr)
         self.state = ClientState.HELLO_WAIT
 
@@ -71,13 +71,13 @@ class Client:
 
             # Check magic and decide what to do based on what state we're currently in
             if magic == 0xC356 and version == 1:
-                if command == int(MessageType.GOODBYE):
+                if command == MessageType.GOODBYE:
                     self.state = ClientState.CLOSING
                     self.__close()
                 else: 
                     match self.state:
                         case ClientState.HELLO_WAIT:
-                            if command == int(MessageType.HELLO):
+                            if command == MessageType.HELLO:
                                 self.timer_on = False
                                 self.state = ClientState.READY
                                 self.sequence_number += 1
@@ -85,20 +85,20 @@ class Client:
                                 self.state = ClientState.CLOSING
                                 self.__close() 
                         case ClientState.READY:
-                            if command == int(MessageType.ALIVE):
+                            if command == MessageType.ALIVE:
                                 continue
                             else:
                                 self.state = ClientState.CLOSING
                                 self.__close() 
                         case ClientState.READY_TIMER:
-                            if command == int(MessageType.ALIVE):
+                            if command == MessageType.ALIVE:
                                 self.timer_on = False
                                 self.state = ClientState.READY
                             else:
                                 self.state = ClientState.CLOSING
                                 self.__close()
                         case ClientState.CLOSING:
-                            if command == int(MessageType.ALIVE):
+                            if command == MessageType.ALIVE:
                                 continue
                             else:
                                 self.state = ClientState.CLOSING
@@ -123,7 +123,7 @@ class Client:
                     self.__close()
             else:
                 if self.state == ClientState.READY:
-                    data_header = create_header(int(MessageType.DATA), self.sequence_number, self.session_id)
+                    data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
                     data_msg = data_header + text.encode('utf-8')
                     self.socket.sendto(data_msg, self.server_addr)
                     self.sequence_number += 1
@@ -134,7 +134,7 @@ class Client:
 
                     self.state = ClientState.READY_TIMER
                 elif self.state == ClientState.READY_TIMER:
-                    data_header = create_header(int(MessageType.DATA), self.sequence_number, self.session_id)
+                    data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
                     data_msg = data_header + text.encode('utf-8')
                     self.socket.sendto(data_msg, self.server_addr)
                     self.sequence_number += 1
@@ -149,7 +149,7 @@ class Client:
             self.running = False
         else:
             # create goodbye message and send into socket, then close socket
-            goodbye = create_header(int(MessageType.GOODBYE), self.sequence_number, self.session_id)
+            goodbye = create_header(MessageType.GOODBYE, self.sequence_number, self.session_id)
             self.socket.sendto(goodbye, self.server_addr)
             self.state = ClientState.CLOSING
 

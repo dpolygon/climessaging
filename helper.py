@@ -26,6 +26,12 @@ class ServerState:
     RECEIVE = 0
     DONE = 1
 
+def create_header(command, sequence_number, session_id):
+    return struct.pack(_HEADER, 50006, 1, command, sequence_number, session_id)
+
+def unpack_header(data):
+    return struct.unpack(_HEADER, data[0:12])
+
 def command_to_ascii(command):
     match command: 
         case 1:
@@ -37,9 +43,3 @@ def command_to_ascii(command):
         case 4:
             return 'Goodbye'
     return 'Invalid Command'
-
-def create_header(command, sequence_number, session_id):
-    return struct.pack(_HEADER, 50006, 1, command, sequence_number, session_id)
-
-def unpack_header(data):
-    return struct.unpack(_HEADER, data[0:12])

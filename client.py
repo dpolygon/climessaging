@@ -20,15 +20,19 @@ class ClientData:
         self.state = ClientState.UNDEFINED
     
 class Client:
-    def __init__(self, server_name, server_port, running):
+    def __init__(self):
         #  Logging level set to INFO, change to DEBUG for print statements
         logging.basicConfig(format='%(message)s', level=logging.INFO)
         
         # Setting up client state
         self.session_id = random.randint(0, (2 ** 32) - 1)
-        self.sequence_number = 0
-        self.server_addr = (server_name, server_port)
         self.buffer_size = 2048
+        self.sequence_number = 0
+        print('provide a domain name (e.g., UTCS-MACHINE-NAME.cs.utexas.edu ) or an IPv4 address.')
+        server_name = sys.stdin.readline().strip()
+        print('provide a port number.')
+        server_port = int(sys.stdin.readline().strip())
+        self.server_addr = (server_name, server_port)
         self.client_time = time.process_time()
         self.timer_on = True
         self.sem = Semaphore()
@@ -40,29 +44,29 @@ class Client:
         self.message_queue = Queue()
 
         # Create a thread to handle keyboard input and handle client timeout
-        self.handle_keyboard_thread = Thread(target = self.__handle_keyboard, args=(running,), daemon = True)
-        self.handle_timeout_thread = Thread(target = self.__handle_timeouts, args=(running,), daemon = True)
+        self.handle_keyboard_thread = Thread(target = self.__handle_keyboard, daemon = True)
+        self.handle_timeout_thread = Thread(target = self.__handle_timeouts, daemon = True)
         
         # On initialization, send a hello to the server
         hello_header = create_header(MessageType.HELLO, 0, self.session_id)
         self.socket.sendto(hello_header, self.server_addr)
         self.state = ClientState.HELLO_WAIT
-
+        self.running = True
         # Begin keyboard and socket threads
         self.handle_keyboard_thread.start()
         self.handle_timeout_thread.start()
-        self.__handle_socket(running)
+        self.__handle_socket()
 
-    def __handle_timeouts(self, running):
-        while running:
+    def __handle_timeouts(self):
+        while self.running:
             if self.timer_on:
                 passed_time = time.process_time() - self.client_time;
                 if passed_time > 300.0 and self.timer_on:
                     self.__close()
                 time.sleep(2)
 
-    def __handle_socket(self, running):
-        while running:
+    def __handle_socket(self):
+        while self.running:
             logging.debug("client socket waiting for server message")
             # listen to socket for any messages
             packet, _ = self.socket.recvfrom(self.buffer_size)
@@ -73,48 +77,25 @@ class Client:
             if magic != 0xC356 or version != 1:
                 continue
                 
+            if self.state == ClientState.HELLO_WAIT and command == MessageType.HELLO:
+                print("chatroom found - connected!")
+                self.timer_on = False
+                self.state = ClientState.READY
+                self.sequence_number += 1
+                continue
+                
             if command == MessageType.GOODBYE:
+                print("server disconnecting...")
                 self.state = ClientState.CLOSING
                 self.__close()
                 continue
             
-            match self.state:
-                case ClientState.HELLO_WAIT:
-                    if command == MessageType.HELLO:
-                        self.timer_on = False
-                        self.state = ClientState.READY
-                        self.sequence_number += 1
-                    else:
-                        self.state = ClientState.CLOSING
-                        self.__close() 
-                case ClientState.READY:
-                    if command == MessageType.ALIVE:
-                        continue
-                    else:
-                        self.state = ClientState.CLOSING
-                        self.__close() 
-                case ClientState.READY_TIMER:
-                    if command == MessageType.ALIVE:
-                        self.timer_on = False
-                        self.state = ClientState.READY
-                    else:
-                        self.state = ClientState.CLOSING
-                        self.__close()
-                case ClientState.CLOSING:
-                    if command == MessageType.ALIVE:
-                        continue
-                    else:
-                        self.state = ClientState.CLOSING
-                        self.__close() 
-                case ClientState.CLOSED:
-                    pass
-                case _:
-                    logging.error("invalid state! closing")
-                    self.state = ClientState.CLOSING
-                    self.__close()
+            if self.state == ClientState.READY_TIMER and command == MessageType.ALIVE:
+                self.timer_on = False
+                self.state = ClientState.READY
             
-    def __handle_keyboard(self, running):
-        while running:
+    def __handle_keyboard(self):
+        while self.running:
             text = sys.stdin.readline()
             logging.debug("client key input detected...")
 
@@ -147,7 +128,6 @@ class Client:
                 
     def __close(self):
         self.sem.acquire()
-
         if self.state == ClientState.CLOSING:
             self.state = ClientState.CLOSED
             self.running = False
@@ -165,8 +145,6 @@ class Client:
 
 # command line argument: name + port
 if __name__ == "__main__":
-    server_name = sys.argv[1]           # destination address
-    server_port = int(sys.argv[2])      # port number
-   
+    
     # Create client
-    client = Client(server_name, server_port)
+    client = Client()

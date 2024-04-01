@@ -15,7 +15,7 @@ class Server:
     expected_num_of_packets = 58936
     testing = False
 
-    def __init__(self, server_name, server_port, running, app=False):
+    def __init__(self, server_name, server_port, app=False):
         # Logging level set to INFO, change to DEBUG for print statements
         logging.basicConfig(format='%(message)s', level=logging.INFO)
         
@@ -37,13 +37,14 @@ class Server:
         self.message_queue = Queue()
         self.validation_queue = Queue()
         logging.debug("queues creates")
+        
+        self.running = True
 
         # initialize threads
-        self.handle_packets_thread = Thread(target = self.__handle_packets, args=(running,), daemon = True)
-        self.handle_validation_thread = Thread(target = self.__handle_validation, args=(running,), daemon = True)
-        self.handle_printing_thread = Thread(target = self.__handle_printing, args=(running,), daemon = True)
-        self.handle_timeout_thread = Thread(target = self.__handle_timeouts, args=(running,), daemon = True)
-        self.handle_socket_thread = Thread(target = self.__handle_socket, args=(running,), daemon = True)
+        self.handle_packets_thread = Thread(target = self.__handle_packets, daemon = True)
+        self.handle_validation_thread = Thread(target = self.__handle_validation, daemon = True)
+        self.handle_printing_thread = Thread(target = self.__handle_printing, daemon = True)
+        self.handle_timeout_thread = Thread(target = self.__handle_timeouts, daemon = True)
 
 
         # begin running threads
@@ -55,11 +56,11 @@ class Server:
         logging.debug("timout thread online")
         self.handle_packets_thread.start()
         logging.debug("packet thread online")
-        self.handle_socket_thread.start()
+        self.__handle_socket()
 
 
-    def __handle_socket(self, running):
-        while running:
+    def __handle_socket(self):
+        while self.running:
             # Check to see if a packet has been recieved
             try:
                 packet, client_addr = self.socket.recvfrom(self.buffer_size)
@@ -71,8 +72,8 @@ class Server:
                 
         self.socket.close()
         
-    def __handle_packets(self, running):
-        while running:
+    def __handle_packets(self):
+        while self.running:
             if not self.packet_queue.empty():
                 logging.debug("packet found in queue...")
                 packet, client_addr = self.packet_queue.get()
@@ -125,8 +126,8 @@ class Server:
             alive = create_header(MessageType.ALIVE, self.outgoing_seq_num, session_id)
             self.socket.sendto(alive, client_addr)
 
-    def __handle_validation(self, running):
-        while running:
+    def __handle_validation(self):
+        while self.running:
             if not self.validation_queue.empty():
                 logging.debug("validating ...")
                 packet, client_addr = self.validation_queue.get();
@@ -166,26 +167,33 @@ class Server:
                     self.validate_and_push(session_id, sequence_number, packet, client_addr)
             
                     
-    def __handle_timeouts(self, running):
-        while running:
+    def __handle_timeouts(self):
+        while self.running:
             for session_id in list(self.clients):
                 client = self.clients.get(session_id)
                 client_time = client.time
                 passed_time = time.process_time() - client_time;
-                if passed_time > 300.0 and client.timer_on:
+                if passed_time > 10.0 and client.timer_on:
                     self.__client_close(client.client_addr, session_id)
             time.sleep(2)
+            
+    def __handle_keyboard(self):
+        while self.running:
+            text = sys.stdin.readline()
+            logging.debug("server detected keyboard input...")
+            if not text or (text == "q\n" and sys.stdin.isatty()):
+                self.__server_close()
 
-    def __handle_printing(self, running):
-        while running:
+    def __handle_printing(self):
+        while self.running:
             if not self.message_queue.empty():
                 logging.debug("server found message in printing queue...")
                 message = self.message_queue.get()
                 print(message.rstrip())
             
             
-    def __server_close(self, running):
-        while running:
+    def __server_close(self):
+        while self.running:
             time.sleep(1)
         logging.debug("terminating all client connections")
         # Iterate through all clients and send a goodbye

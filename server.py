@@ -36,6 +36,7 @@ class Server:
         self.packet_queue = Queue()
         self.message_queue = Queue()
         self.validation_queue = Queue()
+        self.broadcast_queue = Queue()
         logging.debug("queues creates")
         
         self.running = True
@@ -46,7 +47,8 @@ class Server:
         self.handle_printing_thread = Thread(target = self.__handle_printing, daemon = True)
         self.handle_timeout_thread = Thread(target = self.__handle_timeouts, daemon = True)
         self.handle_keyboard_thread = Thread(target = self.__handle_keyboard, daemon = True)
-
+        self.handle_broadcast_thread = Thread(target = self.__handle_broadcast, daemon = True)
+        
         # begin running threads
         self.handle_validation_thread.start()
         logging.debug("validation thread online")
@@ -58,6 +60,8 @@ class Server:
         logging.debug("packet thread online")
         self.handle_keyboard_thread.start()
         logging.debug("keyboard thread online")
+        self.handle_broadcast_thread.start()
+        logging.debug("broadcast thread online")
         self.__handle_socket()
 
 
@@ -73,6 +77,19 @@ class Server:
                 logging.debug("packet picked up...")
                 
         self.socket.close()
+        
+    def __handle_broadcast(self):
+        while self.running:
+            if self.broadcast_queue.empty():
+                continue
+            
+            logging.debug("broadcasting...")
+            id, message = self.broadcast_queue.get()
+            for session_id in self.clients:
+                client = self.clients[session_id]
+                hello_message = create_header(MessageType.DATA, 0, session_id)
+                msg = hello_message + message.encode('utf-8') 
+                self.socket.sendto(msg, client.client_addr)
         
     def __handle_packets(self):
         while self.running:
@@ -125,6 +142,7 @@ class Server:
             logging.debug(f'[{sequence_number}]')
             message = f'{user} ' + packet[12:].decode("utf-8")
             self.message_queue.put(message)
+            self.broadcast_queue.put((session_id, message))
 
             # Set the timer
             self.clients[session_id].time = time.process_time()
@@ -135,45 +153,47 @@ class Server:
 
     def __handle_validation(self):
         while self.running:
-            if not self.validation_queue.empty():
-                logging.debug("validating ...")
-                packet, client_addr = self.validation_queue.get();
-                magic, version, command, sequence_number, session_id = unpack_header(packet)    
+            if self.validation_queue.empty():
+                continue
+            
+            logging.debug("validating ...")
+            packet, client_addr = self.validation_queue.get();
+            magic, version, command, sequence_number, session_id = unpack_header(packet)    
 
-                if magic != 0xC356 or version != 1:
-                    continue
-                
-                if command == MessageType.HELLO:
-                    user = self.clients[session_id].username
-                    self.message_queue.put(f'{user} joined the conversation')
-                    continue
+            if magic != 0xC356 or version != 1:
+                continue
+            
+            if command == MessageType.HELLO:
+                user = self.clients[session_id].username
+                self.message_queue.put(f'{user} joined the conversation')
+                continue
 
-                if command == MessageType.GOODBYE:
-                    self.__client_close(client_addr, session_id)
-                    continue
+            if command == MessageType.GOODBYE:
+                self.__client_close(client_addr, session_id)
+                continue
 
-                elif command == MessageType.DATA:
-                    if session_id in self.clients.keys():
-                        client = self.clients[session_id]
-                        if sequence_number > client.expected_sequence_number:
-                            # Should have normal behavior, since we still received a valid packet
-                            # When receiving a valid DATA, turn off the timer for that client
-                            self.clients[session_id].timer_on = False
-                            lost_packets = sequence_number - client.expected_sequence_number
-                            for lost_packet in range(lost_packets):
-                                self.message_queue.put(f'{hex(session_id)} [{lost_packet + client.expected_sequence_number}] Lost packet!')
-                            client.expected_sequence_number += lost_packets
+            elif command == MessageType.DATA:
+                if session_id in self.clients.keys():
+                    client = self.clients[session_id]
+                    if sequence_number > client.expected_sequence_number:
+                        # Should have normal behavior, since we still received a valid packet
+                        # When receiving a valid DATA, turn off the timer for that client
+                        self.clients[session_id].timer_on = False
+                        lost_packets = sequence_number - client.expected_sequence_number
+                        for lost_packet in range(lost_packets):
+                            self.message_queue.put(f'{hex(session_id)} [{lost_packet + client.expected_sequence_number}] Lost packet!')
+                        client.expected_sequence_number += lost_packets
 
-                        elif sequence_number < client.expected_sequence_number:
-                            self.message_queue.put(f'{hex(session_id)} [{sequence_number}] Out of order packet!')
-                            self.__client_close(client_addr, session_id)
-                            continue
+                    elif sequence_number < client.expected_sequence_number:
+                        self.message_queue.put(f'{hex(session_id)} [{sequence_number}] Out of order packet!')
+                        self.__client_close(client_addr, session_id)
+                        continue
 
-                        elif (client.previous_sequence_number == sequence_number):
-                            self.message_queue.put(f'{hex(session_id)}[{sequence_number}] Duplicate packet!')
-                            continue
+                    elif (client.previous_sequence_number == sequence_number):
+                        self.message_queue.put(f'{hex(session_id)}[{sequence_number}] Duplicate packet!')
+                        continue
 
-                self.validate_and_push(session_id, sequence_number, packet, client_addr)    
+            self.validate_and_push(session_id, sequence_number, packet, client_addr)    
                     
     def __handle_timeouts(self):
         while self.running:
@@ -194,10 +214,12 @@ class Server:
 
     def __handle_printing(self):
         while self.running:
-            if not self.message_queue.empty():
-                logging.debug("server found message in printing queue...")
-                message = self.message_queue.get()
-                print(message.rstrip())
+            if self.message_queue.empty():
+                continue
+            
+            logging.debug("server found message in printing queue...")
+            message = self.message_queue.get()
+            print(message.rstrip())
             
     def __server_close(self):
         logging.debug("terminating all client connections")

@@ -24,6 +24,7 @@ class Client:
         print(f'Welcome {self.username}')
         self.server_addr = (server_name, server_port)
         self.client_time = time.process_time()
+        self.echo = False
         self.timer_on = True
         self.sem = Semaphore()
         
@@ -76,7 +77,8 @@ class Client:
                 continue
 
             if command == MessageType.DATA:
-                print("server wants to say something")
+                if self.session_id != session_id or self.echo:
+                    print(packet[12:].decode('utf-8'))
 
             if command == MessageType.ALIVE and self.state == ClientState.READY_TIMER:
                 self.timer_on = False

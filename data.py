@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
-import struct
-from email.message import Message
+from struct import pack, unpack
 
 _HEADER = '!HBBII'
+
+class ClientData:
+    def __init__(self, username, client_addr, session_id, time):
+        self.username = username
+        self.client_addr = client_addr
+        self.session_id = session_id
+        self.expected_sequence_number = 1
+        self.previous_sequence_number = 0
+        self.time = time
+        self.timer_on = True
+        self.state = ClientState.UNDEFINED
 
 # Define value for message types
 class MessageType:
@@ -27,10 +37,11 @@ class ServerState:
     DONE = 1
 
 def create_header(command, sequence_number, session_id):
-    return struct.pack(_HEADER, 50006, 1, command, sequence_number, session_id)
+    return pack(_HEADER, 50006, 1, command, sequence_number, session_id)
 
 def unpack_header(data):
-    return struct.unpack(_HEADER, data[0:12])
+    return unpack(_HEADER, data[0:12])
+    
 
 def command_to_ascii(command):
     match command: 

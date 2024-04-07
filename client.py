@@ -6,18 +6,8 @@ import logging
 import time
 
 from queue import Queue
-from helper import *
+from data import *
 from threading import Thread, Semaphore
-
-class ClientData:
-    def __init__(self, client_addr, session_id, time):
-        self.client_addr = client_addr
-        self.session_id = session_id
-        self.expected_sequence_number = 1
-        self.previous_sequence_number = 0
-        self.time = time
-        self.timer_on = True
-        self.state = ClientState.UNDEFINED
     
 class Client:
     def __init__(self):
@@ -28,10 +18,10 @@ class Client:
         self.session_id = random.randint(0, (2 ** 32) - 1)
         self.buffer_size = 2048
         self.sequence_number = 0
-        print('provide a domain name (e.g., UTCS-MACHINE-NAME.cs.utexas.edu ) or an IPv4 address.')
-        server_name = sys.stdin.readline().strip()
-        print('provide a port number.')
-        server_port = int(sys.stdin.readline().strip())
+        server_name = input('Provide a domain name (e.g., UTCS-MACHINE-NAME.cs.utexas.edu) or an IPv4 address: ').strip()
+        server_port = int(input('Provide a port number: ').strip())
+        self.username = input('What name would you like your friends to know you by? ')
+        print(f'Welcome {self.username}')
         self.server_addr = (server_name, server_port)
         self.client_time = time.process_time()
         self.timer_on = True
@@ -49,7 +39,8 @@ class Client:
         
         # On initialization, send a hello to the server
         hello_header = create_header(MessageType.HELLO, 0, self.session_id)
-        self.socket.sendto(hello_header, self.server_addr)
+        hello_msg = hello_header + self.username.encode('utf-8')
+        self.socket.sendto(hello_msg, self.server_addr)
         self.state = ClientState.HELLO_WAIT
         self.running = True
         # Begin keyboard and socket threads
@@ -76,56 +67,56 @@ class Client:
             # Check magic and decide what to do based on what state we're currently in
             if magic != 0xC356 or version != 1:
                 continue
-                
-            if self.state == ClientState.HELLO_WAIT and command == MessageType.HELLO:
+
+            if command == MessageType.HELLO and self.state == ClientState.HELLO_WAIT:
                 print("chatroom found - connected!")
                 self.timer_on = False
                 self.state = ClientState.READY
                 self.sequence_number += 1
                 continue
-                
+
+            if command == MessageType.DATA:
+                print("server wants to say something")
+
+            if command == MessageType.ALIVE and self.state == ClientState.READY_TIMER:
+                self.timer_on = False
+                self.state = ClientState.READY
+
             if command == MessageType.GOODBYE:
                 print("server disconnecting...")
                 self.state = ClientState.CLOSING
                 self.__close()
                 continue
-            
-            if self.state == ClientState.READY_TIMER and command == MessageType.ALIVE:
-                self.timer_on = False
-                self.state = ClientState.READY
-            
+
     def __handle_keyboard(self):
         while self.running:
-            text = sys.stdin.readline()
+            text = input()
             logging.debug("client key input detected...")
 
             # Terminates client if input is invalid (CTRL-d/c or 'q')
             if (not text or (text == "q" and sys.stdin.isatty())):
-                if self.state == ClientState.HELLO_WAIT or self.state == ClientState.READY or self.state == ClientState.READY_TIMER:
-                    self.__close()
-                else:
-                    self.state = ClientState.CLOSING
-                    self.__close()
-            else:
-                if self.state == ClientState.READY:
-                    data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
-                    data_msg = data_header + text.encode('utf-8')
-                    self.socket.sendto(data_msg, self.server_addr)
-                    self.sequence_number += 1
+                print("leaving chat")
+                self.__close()
+                continue
 
-                    # Set timer
-                    self.client_time = time.process_time()
-                    self.timer_on = True
+            if self.state == ClientState.READY:
+                data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
+                data_msg = data_header + text.encode('utf-8')
+                self.socket.sendto(data_msg, self.server_addr)
+                self.sequence_number += 1
+                # Set timer
+                self.client_time = time.process_time()
+                self.timer_on = True
+                self.state = ClientState.READY_TIMER
 
-                    self.state = ClientState.READY_TIMER
-                elif self.state == ClientState.READY_TIMER:
-                    data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
-                    data_msg = data_header + text.encode('utf-8')
-                    self.socket.sendto(data_msg, self.server_addr)
-                    self.sequence_number += 1
+            elif self.state == ClientState.READY_TIMER:
+                data_header = create_header(MessageType.DATA, self.sequence_number, self.session_id)
+                data_msg = data_header + text.encode('utf-8')
+                self.socket.sendto(data_msg, self.server_addr)
+                self.sequence_number += 1
 
-                # If the input is valid, add to the back of the message queue
-                
+            # If the input is valid, add to the back of the message queue
+
     def __close(self):
         self.sem.acquire()
         if self.state == ClientState.CLOSING:
@@ -145,6 +136,6 @@ class Client:
 
 # command line argument: name + port
 if __name__ == "__main__":
-    
+
     # Create client
     client = Client()

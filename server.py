@@ -87,7 +87,7 @@ class Server:
             id, message = self.broadcast_queue.get()
             for session_id in self.clients:
                 client = self.clients[session_id]
-                hello_message = create_header(MessageType.DATA, 0, session_id)
+                hello_message = create_header(MessageType.DATA, 0, id)
                 msg = hello_message + message.encode('utf-8') 
                 self.socket.sendto(msg, client.client_addr)
         
@@ -165,7 +165,9 @@ class Server:
             
             if command == MessageType.HELLO:
                 user = self.clients[session_id].username
-                self.message_queue.put(f'{user} joined the conversation')
+                msg = f'{user} joined the conversation'
+                self.message_queue.put(msg)
+                self.broadcast_queue.put((session_id, msg))
                 continue
 
             if command == MessageType.GOODBYE:
@@ -201,7 +203,7 @@ class Server:
                 client = self.clients.get(session_id)
                 client_time = client.time
                 passed_time = time.process_time() - client_time;
-                if passed_time > 10.0 and client.timer_on:
+                if passed_time > 300.0 and client.timer_on:
                     self.__client_close(client.client_addr, session_id)
             time.sleep(2)
             
@@ -239,7 +241,9 @@ class Server:
         if session_id in self.clients:
             user = self.clients[session_id].username
             del(self.clients[session_id])
-            self.message_queue.put(f'{user} left the chat.')
+            msg = f'{user} left the chat.'
+            self.message_queue.put(msg)
+            self.broadcast_queue.put((session_id, msg))
         self.sem.release()
 
         if self.testing:
